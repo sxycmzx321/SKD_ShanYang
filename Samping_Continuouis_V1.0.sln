@@ -1,0 +1,43 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.10.35027.167
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Samping_Continuous_V1.0", "Samping_ShanYang_v1.0\Samping_Continuous_V1.0.csproj", "{89E08EEB-D912-4ED4-9B8C-EC5E19805283}"
+EndProject
+Project("{54435603-DBB4-11D2-8724-00A0C9A8B90C}") = "采集软件_16channel", "采集软件_16channel\采集软件_16channel.vdproj", "{53F04483-5509-4AA2-B76C-03297FF3C77D}"
+EndProject
+Project("{54435603-DBB4-11D2-8724-00A0C9A8B90C}") = "SKD_Sampling_karerman_1218", "SKD_Sampling_karerman_1218\SKD_Sampling_karerman_1218.vdproj", "{93DD4023-3CC9-428C-8747-B2E87DC331A7}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{89E08EEB-D912-4ED4-9B8C-EC5E19805283}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{89E08EEB-D912-4ED4-9B8C-EC5E19805283}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{89E08EEB-D912-4ED4-9B8C-EC5E19805283}.Debug|x64.ActiveCfg = Debug|x64
+		{89E08EEB-D912-4ED4-9B8C-EC5E19805283}.Debug|x64.Build.0 = Debug|x64
+		{89E08EEB-D912-4ED4-9B8C-EC5E19805283}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{89E08EEB-D912-4ED4-9B8C-EC5E19805283}.Release|Any CPU.Build.0 = Release|Any CPU
+		{89E08EEB-D912-4ED4-9B8C-EC5E19805283}.Release|x64.ActiveCfg = Release|x64
+		{89E08EEB-D912-4ED4-9B8C-EC5E19805283}.Release|x64.Build.0 = Release|x64
+		{53F04483-5509-4AA2-B76C-03297FF3C77D}.Debug|Any CPU.ActiveCfg = Debug
+		{53F04483-5509-4AA2-B76C-03297FF3C77D}.Debug|x64.ActiveCfg = Debug
+		{53F04483-5509-4AA2-B76C-03297FF3C77D}.Release|Any CPU.ActiveCfg = Release
+		{53F04483-5509-4AA2-B76C-03297FF3C77D}.Release|x64.ActiveCfg = Release
+		{93DD4023-3CC9-428C-8747-B2E87DC331A7}.Debug|Any CPU.ActiveCfg = Debug
+		{93DD4023-3CC9-428C-8747-B2E87DC331A7}.Debug|x64.ActiveCfg = Debug
+		{93DD4023-3CC9-428C-8747-B2E87DC331A7}.Release|Any CPU.ActiveCfg = Release
+		{93DD4023-3CC9-428C-8747-B2E87DC331A7}.Release|x64.ActiveCfg = Release
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {9ED80465-1887-437C-B202-3459DD5DD787}
+	EndGlobalSection
+EndGlobal

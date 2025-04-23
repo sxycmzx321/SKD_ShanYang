@@ -1,0 +1,556 @@
+﻿using MySql.Data.MySqlClient;
+using OxyPlot;
+using OxyPlot.Axes;
+using OxyPlot.Series;
+using System;
+using System.Data;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace Samping_ShanYang_v1._0
+{
+    public partial class Form1 : Form
+    {
+        public static extern bool SetDllDirectory(string lpPathName);
+        int samplingNpointCount = 0;                     // 样本计数器
+        int samplingNpointNum = 1000;               // N点采样数量
+        int totalNumofNpointSamplingTimes = 5;      // N点采样总次数
+        int samplingFrequency;              // 采样频率
+        int samplingResolution = 2;                 // 采样分辨率         
+        int portNum = 9002;                         // 默认端口号
+        int curDeviceNum = 0;                       // 当前设备数量
+        int deviceNo = 0;                           // 单个DAQ的默认值为0
+        int curHandle = 0;                          // 当前设备的句柄
+        int NumofADCChannel = 16;                   // ADC通道数量
+        string ipAdrStr;                            // IP地址字符串
+        byte[] ipAdr = new byte[128];               // 用于存储IP地址
+        double[] revResult = new double[512000];    // 最大采样频率点数 x (16个ADC通道)
+        int[] initPara = new int[256];
+        int getPoints = 0;
+        int loopTimes = 0;
+        int recvLen = 0;
+        int result = -1;
+        int i;
+        private NotifyIcon notifyIcon;
+        MySQLSet mysql;
+        private System.Timers.Timer gather = new System.Timers.Timer();
+        private bool stopSampling = false;
+        private MySqlConnection connection;
+        private PlotModel plotModel;
+        private PlotModel plotModel2;
+        private KalmanFilter kalmanFilter = new KalmanFilter();  // 创建卡尔曼滤波器实例
+
+        // 构造函数
+        public Form1()
+        {
+            InitializeComponent();
+            InitializePlotView();
+            InitializePlotView2(); // 初始化第二个 plotView
+
+
+            // 设置 DLL 文件路径，确保 DLL 能被正确加载
+            SetDllDirectory(@"E:\ShanYang\Samping_ShanYang_v1.0\Samping_ShanYang_v1.0\bin\Debug");
+        }
+        public class KalmanFilter
+        {
+            private double _q = 0.0001; // 过程噪声
+            private double _r = 0.1;    // 测量噪声
+            private double _x = 0;      // 初始值
+            private double _p = 1;      // 初始误差协方差
+            private double _k = 0;      // 卡尔曼增益
+
+            public double Update(double measurement)
+            {
+                // 预测更新
+                _p = _p + _q;
+
+                // 测量更新
+                _k = _p / (_p + _r);
+                _x = _x + _k * (measurement - _x);
+                _p = (1 - _k) * _p;
+
+                return _x;
+            }
+        }
+        // 更新 Plot 视图，将滤波后的数据放入第二个图
+        private void PlotDenoisedAccelerationCurve(double[] data, int channel)
+        {
+            double[] filteredData = ApplyKalmanFilter(data);  // 应用卡尔曼滤波
+
+            // 移除已有的曲线（按通道号区分）
+            var existingSeries = plotModel2.Series.FirstOrDefault(s => s.Title == $"通道 {channel}");
+            if (existingSeries != null)
+            {
+                plotModel2.Series.Remove(existingSeries);
+            }
+
+            // 创建新的折线图
+            var lineSeries = new LineSeries
+            {
+                Title = $"通道 {channel}",
+                StrokeThickness = 2,
+                MarkerSize = 0,
+                MarkerType = MarkerType.None
+            };
+
+            // 添加滤波后的数据点到折线图
+            for (int i = 0; i < filteredData.Length; i++)
+            {
+                lineSeries.Points.Add(new DataPoint(i, filteredData[i]));
+            }
+
+            // 添加新的曲线到 plotView2
+            plotModel2.Series.Add(lineSeries);
+
+            // 刷新图表
+            plotModel2.InvalidatePlot(true);
+        }
+        // 对信号数据应用卡尔曼滤波
+        private double[] ApplyKalmanFilter(double[] data)
+        {
+            double[] filteredData = new double[data.Length];
+
+            // 对每个数据点进行卡尔曼滤波处理
+            for (int i = 0; i < data.Length; i++)
+            {
+                filteredData[i] = kalmanFilter.Update(data[i]);
+            }
+
+            return filteredData;
+        }
+        private void InitializePlotView()
+        {
+            plotModel = new PlotModel
+            {
+                Title = "加速度曲线",
+                Subtitle = "通道数据实时可视化"
+            };
+
+            // 添加 X 轴（时间）
+            plotModel.Axes.Add(new LinearAxis
+            {
+                Position = AxisPosition.Bottom,
+                Title = "时间 (ms)",
+                Minimum = 0,
+                IsPanEnabled = true,
+                IsZoomEnabled = true
+            });
+
+            // 添加 Y 轴（加速度）
+            plotModel.Axes.Add(new LinearAxis
+            {
+                Position = AxisPosition.Left,
+                Title = "加速度 (m/s²)",
+                IsPanEnabled = true,
+                IsZoomEnabled = true
+            });
+
+            // 将 plotModel 绑定到 plotView1
+            plotView1.Model = plotModel;
+        }
+        private void InitializePlotView2()
+        {
+            plotModel2 = new PlotModel
+            {
+                Title = "去噪后的加速度曲线",
+                Subtitle = "卡尔曼去噪后的信号"
+            };
+
+            // 添加 X 轴（时间）
+            plotModel2.Axes.Add(new LinearAxis
+            {
+                Position = AxisPosition.Bottom,
+                Title = "时间 (ms)",
+                Minimum = 0,
+                IsPanEnabled = true,
+                IsZoomEnabled = true
+            });
+
+            // 添加 Y 轴（加速度）
+            plotModel2.Axes.Add(new LinearAxis
+            {
+                Position = AxisPosition.Left,
+                Title = "加速度 (m/s²)",
+                IsPanEnabled = true,
+                IsZoomEnabled = true
+            });
+
+            // 将 plotModel2 绑定到 plotView2
+            plotView2.Model = plotModel2;
+        }
+        // 绘制加速度曲线
+        // 绘制加速度曲线
+        private void PlotAccelerationCurve(double[] data, int channel)
+        {
+            // 移除已有的曲线（按通道号区分）
+            var existingSeries = plotModel.Series.FirstOrDefault(s => s.Title == $"通道 {channel}");
+            if (existingSeries != null)
+            {
+                plotModel.Series.Remove(existingSeries);
+            }
+
+            // 创建新的折线图
+            var lineSeries = new LineSeries
+            {
+                Title = $"通道 {channel}",
+                StrokeThickness = 2,
+                MarkerSize = 0,
+                MarkerType = MarkerType.None
+            };
+
+            // 添加数据点到折线图
+            for (int i = 0; i < data.Length; i++)
+            {
+                lineSeries.Points.Add(new DataPoint(i, data[i]));
+            }
+
+            // 添加新的曲线到图表
+            plotModel.Series.Add(lineSeries);
+
+            // 刷新图表
+            plotModel.InvalidatePlot(true);
+
+            // 将滤波后的数据绘制到第二个图表
+            PlotDenoisedAccelerationCurve(data, channel); // 传递数据到 plotView2
+        }
+
+
+        public bool WriteData(int port, double[][] channels, DateTime startDate)
+        {
+            string insertQuery;
+
+            // 根据端口号选择表
+            if (port == 9001)
+            {
+                insertQuery = "INSERT INTO `zsh`.`maincurvedata`(`StartDate`, `CH1`, `CH2`, `CH3`, `CH4`, `CH5`, `CH6`, `CH7`, `CH8`) " +
+                              "VALUES(@StartDate, @CH1, @CH2, @CH3, @CH4, @CH5, @CH6, @CH7, @CH8)";
+            }
+            else if (port == 9002)
+            {
+                insertQuery = "INSERT INTO `zsh`.`maincurvedata2`(`StartDate`, `CH1`, `CH2`, `CH3`, `CH4`, `CH5`, `CH6`, `CH7`, `CH8`) " +
+                              "VALUES(@StartDate, @CH1, @CH2, @CH3, @CH4, @CH5, @CH6, @CH7, @CH8)";
+            }
+            else
+            {
+                AddToListBox("无效的端口号。");
+                return false;
+            }
+
+            try
+            {
+                // 确保连接已正确初始化并打开
+                if (connection == null)
+                {
+                    AddToListBox("数据库连接未初始化。正在重新初始化...");
+                    string connectionString = "server=127.0.0.1;port=3306;user=root;password=7418529630;database=zsh;SslMode=none;";
+                    connection = new MySqlConnection(connectionString);
+                }
+
+                if (connection.State != ConnectionState.Open)
+                {
+                    connection.Open();
+                    AddToListBox("重新打开数据库连接成功。");
+                }
+
+                // 准备数据
+                string[] channelData = new string[8];
+                for (int i = 0; i < 8; i++)
+                {
+                    channelData[i] = channels[i] == null || channels[i].Length == 0
+                        ? "0"
+                        : string.Join(",", channels[i].Select(value => value == 0 ? "0" : value.ToString()));
+                }
+
+                // 插入数据
+                using (MySqlCommand command = new MySqlCommand(insertQuery, connection))
+                {
+                    command.Parameters.AddWithValue("@StartDate", startDate); // 时间戳
+                    for (int i = 0; i < 8; i++)
+                    {
+                        command.Parameters.AddWithValue($"@CH{i + 1}", channelData[i]);
+                    }
+
+                    AddToListBox("执行 SQL 查询...");
+                    command.ExecuteNonQuery();
+                    AddToListBox("数据写入成功。");
+                    return true;
+                }
+            }
+            catch (NullReferenceException ex)
+            {
+                AddToListBox($"NullReferenceException: {ex.Message}");
+                AddToListBox("StackTrace: " + ex.StackTrace);
+                return false;
+            }
+            catch (Exception ex)
+            {
+                AddToListBox($"WriteData 错误: {ex.Message}");
+                AddToListBox("StackTrace: " + ex.StackTrace);
+                return false;
+            }
+        }
+
+        private async void btnStartSampling_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                // 获取用户输入的参数
+                string port = txtPort.Text;
+                string samplingRate = txtSamplingRate.Text;
+
+                if (!int.TryParse(port, out int portNum) || portNum <= 0)
+                {
+                    AddToListBox("无效的端口号，请重新输入。");
+                    return;
+                }
+
+                if (!int.TryParse(samplingRate, out int samplingFrequency) || samplingFrequency <= 0)
+                {
+                    AddToListBox("无效的采样率，请重新输入。");
+                    return;
+                }
+
+                // 打开TCP服务器端口
+                AddToListBox("尝试打开TCP服务器端口...");
+                result = await Task.Run(() => Server_TCPOpen(portNum));
+
+                if (result < 0)
+                {
+                    AddToListBox("打开TCP服务器端口失败。");
+                    return;
+                }
+                AddToListBox("TCP服务器端口打开成功。");
+
+                // 查找连接的DAQ设备
+                AddToListBox("正在查找DAQ设备...");
+                result = -1;
+                int loopTimes = 0;
+
+                while (result < 0)
+                {
+                    loopTimes++;
+                    if (loopTimes > 500) // 超时退出，大约10秒
+                    {
+                        AddToListBox("查找DAQ设备超时，退出。");
+                        return;
+                    }
+
+                    result = await Task.Run(() => Server_Get_ConnectedClientNumbers(ref curDeviceNum));
+                    await Task.Delay(20);
+                }
+
+                AddToListBox($"查找DAQ设备成功，已连接的采集卡数量：{curDeviceNum}");
+
+                // 获取当前DAQ的句柄和IP地址
+                Array.Clear(ipAdr, 0, 128);
+                AddToListBox("获取DAQ的句柄和IP地址...");
+
+                result = await Task.Run(() => Server_Get_ConnectedClientHandle(deviceNo, ref curHandle, ipAdr));
+
+                if (result < 0)
+                {
+                    AddToListBox("获取DAQ的句柄和IP地址失败。");
+                    return;
+                }
+
+                string ipAdrStr = Encoding.ASCII.GetString(ipAdr, 0, Array.FindIndex(ipAdr, value => value == 0));
+                AddToListBox($"DAQ设备IP地址：{ipAdrStr}");
+                AddToListBox($"DAQ句柄：{curHandle:D2}");
+
+                // 设置系统模式
+                result = await Task.Run(() => VK7015NH_Set_SystemMode(deviceNo, 0));
+                if (result < 0)
+                {
+                    AddToListBox("设置系统模式失败。");
+                    return;
+                }
+                AddToListBox("系统模式设置成功。");
+
+                // 初始化参数
+                AddToListBox("初始化DAQ参数...");
+                for (int i = 0; i < 256; i++)
+                {
+                    initPara[i] = 0;
+                }
+
+                result = await Task.Run(() => VK7015NH_Initialize_SpecialUse(deviceNo, samplingFrequency, samplingNpointNum, 60, samplingResolution, initPara));
+
+                if (result < 0)
+                {
+                    AddToListBox("初始化DAQ参数失败。");
+                    return;
+                }
+                AddToListBox("初始化DAQ参数成功。");
+
+                // 设置阻塞读取数据
+                result = await Task.Run(() => VK7015NH_Set_BlockingMethodtoReadADCResult(1, 1000));
+                if (result < 0)
+                {
+                    AddToListBox("设置阻塞读取数据失败。");
+                    return;
+                }
+                AddToListBox("阻塞读取数据设置成功。");
+
+                // 启动采样
+                AddToListBox("启动连续采样...");
+                result = await Task.Run(() => VK7015NH_StartSampling(deviceNo, 1));
+
+                if (result < 0)
+                {
+                    AddToListBox("启动连续采样失败。");
+                    return;
+                }
+                AddToListBox("连续采样启动成功。");
+                // 清空之前的 ListBox 内容
+                if (ListBOXData.InvokeRequired)
+                {
+                    // 如果是跨线程操作，需要使用 Invoke
+                    ListBOXData.Invoke(new Action(() =>
+                    {
+                        ListBOXData.Items.Clear();
+                        ListBOXData.Items.Add("连续采样启动成功。"); // 重新添加该行
+                    }));
+                }
+                else
+                {
+                    ListBOXData.Items.Clear();
+                    ListBOXData.Items.Add("连续采样启动成功。"); // 重新添加该行
+                }
+
+                // 数据采样与保存
+                int getPoints = (samplingFrequency > 10) ? samplingFrequency / 10 : 1;
+                double[][] channels = new double[8][];
+
+                for (int i = 0; i < 8; i++)
+                {
+                    channels[i] = new double[getPoints];
+                }
+
+                while (result >= 0)
+                {
+                    recvLen = await Task.Run(() => VK7015NH_GetEntire16Channels(deviceNo, revResult, getPoints));
+
+                    if (recvLen > 0)
+                    {
+                        for (int i = 0; i < 8; i++)
+                        {
+                            for (int j = 0; j < getPoints; j++)
+                            {
+                                channels[i][j] = revResult[i * getPoints + j]*100 ;
+                            }
+                        }
+                        PlotAccelerationCurve(channels[0], 1);
+                        PlotDenoisedAccelerationCurve(channels[0], 1);  // 这里是通道1的滤波数据
+
+                        string[] channelData = new string[8];
+                        for (int i = 0; i < 8; i++)
+                        {
+                            channelData[i] = string.Join(",", channels[i]);
+                        }
+
+                        DateTime startDate = DateTime.Now;
+
+                        bool saveResult = await Task.Run(() => WriteData(portNum, channels, startDate));
+
+                        if (saveResult)
+                        {
+                            AddToListBox("数据成功保存到数据库。");
+                        }
+                        else
+                        {
+                            AddToListBox("保存数据失败，数据将保存到本地日志文件。");
+                            SaveChannelDataToFile(channelData, startDate);
+                        }
+
+                        for (int i = 0; i < 8; i++)
+                        {
+                            AddToListBox($"CH{i + 1} 数据点: {channelData[i]}");
+                        }
+
+                        await Task.Delay(TimeSpan.FromMinutes(1));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AddToListBox($"错误：{ex.Message}");
+            }
+            finally
+            {
+                VK7015NH_StopSampling(deviceNo);
+                Server_TCPClose(portNum);
+                AddToListBox("操作结束。");
+            }
+        }
+
+        // 保存通道数据到本地文本文件
+        private void SaveChannelDataToFile(string[] channelData, DateTime startDate)
+        {
+            try
+            {
+                // 文件名，包含时间戳
+                string fileName = $"ChannelData_{startDate:yyyyMMdd_HHmmss}.txt";
+                string filePath = Path.Combine(Environment.CurrentDirectory, fileName);
+
+                // 构造文件内容
+                StringBuilder fileContent = new StringBuilder();
+                fileContent.AppendLine($"采样时间: {startDate:yyyy-MM-dd HH:mm:ss}");
+                for (int i = 0; i < channelData.Length; i++)
+                {
+                    fileContent.AppendLine($"CH{i + 1} 数据点: {channelData[i]}");
+                }
+
+                // 将内容写入文件
+                File.WriteAllText(filePath, fileContent.ToString(), Encoding.UTF8);
+                AddToListBox($"通道数据保存到文件: {filePath}");
+            }
+            catch (Exception ex)
+            {
+                AddToListBox($"保存数据失败: {ex.Message}");
+            }
+        }
+
+        // 将文本添加到 ListBox 控件
+        private void AddToListBox(string message)
+        {
+            if (ListBOXData.InvokeRequired)
+            {
+                // 如果跨线程更新 ListBox，使用 Invoke 方法
+                ListBOXData.Invoke(new Action(() =>
+                {
+                    ListBOXData.Items.Add(message);
+                    ListBOXData.SelectedIndex = ListBOXData.Items.Count - 1; // 滚动到最新数据
+                }));
+            }
+            else
+            {
+                ListBOXData.Items.Add(message);
+                ListBOXData.SelectedIndex = ListBOXData.Items.Count - 1;
+            }
+        }
+
+        // 按下停止采样按钮时的事件处理
+        private void btnStopSampling_Click(object sender, EventArgs e)
+        {
+            stopSampling = true;  // 设置停止标志为 true，终止循环
+            AddToListBox("停止采样...");
+
+            // 停止采样
+            VK7015NH_StopSampling(deviceNo);
+            Server_TCPClose(portNum);
+            AddToListBox("停止采样成功");
+
+            // 重新启用开始采样按钮
+            btnStartSampling.Enabled = true;
+            btnStopSampling.Enabled = false;
+        }
+    }
+
+}
+
